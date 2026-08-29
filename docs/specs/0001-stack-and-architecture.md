@@ -1,7 +1,7 @@
 # 0001. 采用模块化单体技术栈与本地优先架构
 
 **Date**: 2026-08-29
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 

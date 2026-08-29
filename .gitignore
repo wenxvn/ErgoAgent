@@ -6,6 +6,8 @@ venv/
 node_modules/
 dist/
 build/
+*.egg-info/
 .env
 .env.*
 !.env.example
+data/*.db

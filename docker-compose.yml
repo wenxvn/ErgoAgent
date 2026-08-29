@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      ERGOAGENT_DATA_ROOT: /workspace/data
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - ./data:/workspace/data
+    environment:
+      ERGOAGENT_DATA_ROOT: /workspace/data

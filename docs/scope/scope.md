@@ -17,7 +17,7 @@ ErgoAgent 是面向建筑、制造、仓储和物流作业的职业工效风险�
 
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
-| 1 | 技术栈与架构 | 基础 | planned |
+| 1 | 技术栈与架构 | 基础 | in-progress |
 | 2 | 编码规范与工具链 | 基础 | planned |
 | 3 | 数据契约与持久化 | 基础 | planned |
 | 4 | 设计系统与界面基础 | 基础 | planned |
@@ -32,12 +32,12 @@ ErgoAgent 是面向建筑、制造、仓储和物流作业的职业工效风险�
 
 ## 基础阶段
 
-### 1. 技术栈与架构 · needs a decision · Medium
+### 1. 技术栈与架构 · in-progress · Medium
 
 确定语言、服务边界、前后端形态、推理任务运行方式、文件和数据库边界，并建立可启动的工程骨架。
 **Done when:** 架构决策有规格记录，项目可在本地启动，核心目录和运行入口已经固定。
 - [x] 设计并记录架构决定：`/architect stack and architecture`，规格见 [`docs/specs/0001-stack-and-architecture.md`](../specs/0001-stack-and-architecture.md)
-- [ ] 依据规格建立工程骨架：`/develop stack and architecture`
+- [x] 依据规格建立工程骨架：`/develop stack and architecture`，代码位于 `backend/`、`frontend/`，启动配置位于 `docker-compose.yml`
 - [ ] 验证本地启动、任务状态和关键边界：`/check verify stack and architecture`
 
 ### 2. 编码规范与工具链
