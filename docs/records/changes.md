@@ -66,3 +66,18 @@
 验证：前端 `npm run build` 和 `npm run lint` 通过，后端 `pytest` 通过两项测试，真实 Uvicorn 进程的健康接口和任务读写烟雾测试通过。测试环境出现一条 Starlette 关于 `httpx2` 的弃用提醒，当前不影响运行。
 
 状态：架构规格推进为 `In Progress`，范围功能一保持 `in-progress`。下一步执行 `/check verify stack and architecture`，再进入数据契约规格。
+
+## 2026 年 8 月 29 日，完成架构运行核验
+
+范围：`/check verify stack and architecture`。
+
+已观察证据：
+
+1. 使用 `.venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000` 启动 API，`GET /health` 返回 200 和版本 `0.1.0`。
+2. `POST /api/tasks` 返回 201 和排队任务，随后 `GET /api/tasks/{id}` 返回相同任务。不存在的任务返回 404，空名称返回 422。
+3. SQLite 实际存在 `analysis_tasks` 表及任务状态字段。独立 `python -m app.worker` 进程将排队任务更新为 `running`。
+4. 使用 `npm run dev -- --host 127.0.0.1 --port 5173` 启动前端，页面返回 200，HTML 使用中文语言和标题。
+
+结论：R-1、R-2 和 R-7 的脚手架行为已观察到。R-3、R-4、R-6 和 R-8 需要数据契约、视觉分析和 Agent 功能后才能核验，R-5 还需要浏览器人工检查，因此本次规格整体为 `BLOCKED`，范围中的 Verify 复选框保持未勾选。测试客户端仍有一条 Starlette 关于 `httpx2` 的弃用提醒。
+
+下一步：先运行 `/architect data contract and persistence`，再实现文件存储、结果版本和证据结构。
