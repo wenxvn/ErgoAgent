@@ -36,3 +36,18 @@
 验证：已按 `scope` 技能的绿色项目、Tracer Bullet、基础设施优先和 Full 工作流规则检查范围结构。
 
 影响：下一步固定为 `/architect stack and architecture`，在架构决定前不开始业务代码。
+
+## 2026 年 8 月 29 日，完成技术栈与架构规格
+
+范围：基础架构决策。
+
+改动或发现：
+
+1. 创建 `docs/specs/0001-stack-and-architecture.md`，确定模块化单体、Python 与 TypeScript、FastAPI、React、Vite、SQLite、独立 Worker、本地文件和 Docker Compose。
+2. 固定 API 不执行 GPU 推理、任务状态持久化、结果版本化、Agent 只读证据和本地核心分析不依赖云端密钥等架构不变量。
+3. 在范围文件中加入规格指针、工程骨架任务和验证任务。
+4. 记录官方文档链接和第三方模型资料，未确认的社区技能不自动安装。
+
+验证：已用 `git diff --check` 前置检查文件格式，并逐项核验规格中的官方链接可访问性。工程代码和运行验证尚未开始。
+
+影响：下一步进入 `/develop stack and architecture`，建立真实目录、启动入口和依赖版本。规格状态保持 `Proposed`，待实现和验证后再接受。

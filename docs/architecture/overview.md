@@ -93,7 +93,7 @@ Worker
 
 ## 目标运行方式
 
-第一阶段以 Python 离线分析脚本为主，先实现图片和视频输入到 JSON 与标注视频。第二阶段增加 FastAPI 服务和 React 或 Next.js 前端。存储优先使用文件加 SQLite，避免过早引入微服务、容器编排和复杂基础设施。
+第一阶段采用模块化单体。FastAPI 负责 REST JSON 接口和任务编排，独立 Python Worker 负责图片和视频分析，React 与 Vite 负责结果工作台。SQLite 保存任务与元数据，本地文件系统保存视频、结果视频、证据帧和报告，Docker Compose 负责本地复现。API 请求不得执行 GPU 推理。
 
 ## 外部组件边界
 
