@@ -356,6 +356,7 @@ Worker
 | 文件 | 用途 |
 | --- | --- |
 | `docs/architecture/overview.md` | 当前架构快照和模块契约 |
+| `docs/scope/scope.md` | 当前功能范围、顺序、出口条件和延期项 |
 | `docs/records/changes.md` | 每次更新的追加式记录 |
 | `docs/records/decisions.md` | 技术和产品决策记录 |
 | `docs/records/issues.md` | 问题、风险和阻塞记录 |
