@@ -48,11 +48,14 @@ ErgoAgent 是面向建筑、制造、仓储和物流作业的职业工效风险�
 - [ ] 安装和配置工具：`/develop tooling`
 - [ ] 验证工具链：`/check verify tooling`
 
-### 3. 数据契约与持久化 · needs a decision · Full
+### 3. 数据契约与持久化 · planned · Full
 
 为视频、人员、帧、姿态、角度、规则结果、风险事件、证据帧和分析任务定义稳定的数据契约。
 **Done when:** 统一 JSON、持久化结构、版本字段、错误状态和迁移策略可以支持后续分析、前端和 Agent，不依赖重新解析历史结果。
-- [ ] 设计数据契约和存储决定：`/architect data contract and persistence`
+- [x] 设计数据契约和存储决定：`/architect data contract and persistence`，规格见 [`docs/specs/0002-data-contract-and-persistence.md`](../specs/0002-data-contract-and-persistence.md)
+- [ ] 实现模型、迁移、文件存储和读取接口：`/develop data contract and persistence`
+- [ ] 验证迁移、状态机、分页和路径安全：`/check verify data contract and persistence`
+- [ ] 固化数据契约和失败场景测试：`/test data contract and persistence`
 
 ### 4. 设计系统与界面基础 · needs a decision
 
@@ -128,7 +131,7 @@ ErgoAgent 是面向建筑、制造、仓储和物流作业的职业工效风险�
 
 ## 下一步
 
-第一个未完成事项是 `/architect stack and architecture`。完成规格后，再按顺序进行工程骨架、工具链、数据契约和最小端到端路径。每个功能完成后必须同步 `agent.md` 所列的架构、变更、决策、问题、研究和比赛记录。
+当前第一个未完成事项是 `/architect data contract and persistence` 的实现。完成数据契约规格后，按顺序执行迁移、文件存储、结果接口和测试，再进入最小端到端路径。每个功能完成后必须同步 `agent.md` 所列的架构、变更、决策、问题、研究和比赛记录。
 
 ## 状态说明
 
