@@ -1,0 +1,36 @@
+{
+  "manifest_version": "0.2",
+  "created_at": "2026-08-30",
+  "input_policy": "same uploaded video bytes identified by sha256; metrics are comparable only after both runners succeed",
+  "reference": {
+    "name": "MediaPipe Pose",
+    "version": "0.10.21",
+    "status": "executed",
+    "license": "Apache-2.0",
+    "runner": ".venv-vision312/bin/python -m app.worker"
+  },
+  "candidates": [
+    {
+      "name": "REBAPose",
+      "repository": "https://github.com/umic-iitm/rebapose",
+      "commit": "185391aeea01364dfef6194bb30b438b0f993c99",
+      "license": "MIT",
+      "status": "blocked_external_runtime",
+      "entrypoint": "REBAPose.py",
+      "required_assets": ["ModelWeights/best-6359ffd3_20231208.pth", "custom MMPose config", "YOLOX detector weights", "MotionBERT human3d weights"],
+      "reason": "Entrypoint is available, but the custom weight/config and MMPose/MotionBERT runtime are not part of this project and were not downloaded into the reproducible environment.",
+      "next_command": "git clone --filter=blob:none https://github.com/umic-iitm/rebapose.git vendor/rebapose && follow its pinned MMPose installation"
+    },
+    {
+      "name": "AutoPostureCV",
+      "repository": "https://github.com/Admiral-White/AutoPostureCV_Public",
+      "commit": "82a69f94daafe45f55d6b7bf45dce715e0ea53a7",
+      "license": "MIT",
+      "status": "blocked_no_source_at_commit",
+      "entrypoint": null,
+      "required_assets": [],
+      "reason": "The pinned repository tree contains README.md and LICENSE only; the README documents scripts that are not present at this commit.",
+      "next_command": "re-check a newer tagged commit only after its source and weights are available"
+    }
+  ]
+}

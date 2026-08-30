@@ -133,3 +133,61 @@
 3. 在全新临时 SQLite 数据库执行 `ERGOAGENT_DATA_ROOT=<tmp> .venv/bin/alembic upgrade head`，确认九张业务表、外键、`uq_run_attempt` 唯一约束及风险事件索引均存在。
 
 状态：数据契约与持久化实现完成；后续仍需独立 `/check verify data contract and persistence` 与 `/test data contract and persistence` 做流程级复核。
+
+## 2026 年 8 月 30 日，完成 MVP 视频分析闭环
+
+范围：最小端到端骨架和 Web 分析流程。
+
+改动：
+
+1. 接入本地 MediaPipe Pose 0.10.21、逐帧角度计算、reba-lite-0.1、连续高风险事件、证据帧和标注视频。
+2. 前端接入真实视频上传、任务轮询、峰值 REBA、检测摘要、风险事件、证据帧和标注视频查看。
+3. Worker 增加失败状态回写、取消请求收尾和缺失视频处理；结果产物提供安全读取接口。
+
+验证：
+
+1. 使用 4293956-uhd_3840_2160_25fps.mp4 完成真实运行：284 帧、252 帧检测成功、峰值 REBA 7、0 个高风险事件。
+2. 空白视频验证为 analysis_failed / no_pose_detected，不产生伪造结果。
+3. 后端回归测试、前端 lint/build、Python 编译和 git diff --check 通过。
+
+状态：MVP 可运行；正式 REBA 标准映射、REBAPose 基线比较、多人员跟踪、Agent 和比赛材料仍未完成。
+
+## 2026 年 8 月 30 日，完成后续 1～4 的可交付切片
+
+范围：基线核验、跟踪接线、证据报告和结构化证据助手。
+
+改动：
+
+1. 新增 `CentroidTracker` 并接入分析器；逐帧观察、风险事件和结果 JSON 保存 `worker_id`/`track_id`。针对高分辨率视频按尺寸缩放匹配距离，并支持单轨迹漏检恢复。
+2. 成功运行生成 HTML 与 JSON 双报告 artifact；增加 hash/大小/MIME 记录和安全内容读取接口。
+3. 新增确定性证据助手：根据问题选择摘要、风险事件、证据帧和关节角度工具；回答引用具体运行、Worker、事件和证据帧。
+4. 建立 REBAPose/AutoPostureCV baseline manifest；GitHub API 仅核验到仓库元数据，因浅克隆超时未宣称已完成同视频比较。
+
+验证：
+
+1. `.venv/bin/pytest -q`：10 passed。
+2. `.venv/bin/python -m compileall -q backend/app backend/alembic` 和 `git diff --check` 通过。
+3. `frontend`: `npm run lint`、`npm run build` 通过；Vite `http://127.0.0.1:5173/` 返回 200。
+4. 真实 4K 视频回归：284 帧、252 帧检测、1 个稳定 Worker、峰值 REBA 7、0 个高风险事件；artifact 包含 `result_json`、`annotated_video`、`report`、`report_json`。
+
+边界（当时记录）：当时仍是单人 MediaPipe 二维姿态和 `reba-lite-0.1` 辅助评估；后续记录已更新为标准表格代理评分和 HOG 多人实验模式，外部基线仍未形成可比指标。
+
+## 2026 年 8 月 30 日，继续执行 1～4：基线清单、标准 REBA 和多人实验模式
+
+范围：将后续 1～4 中可在本机验证的部分落到可审计实现，并保留外部运行时阻塞。
+
+改动：
+
+1. 新增 `docs/research/baseline-manifest.json` 和 `backend/app/baselines.py`，固定 REBAPose/AutoPostureCV 提交、许可证、入口、所需权重和阻塞原因；基线接口直接返回 manifest，不生成不可比指标。
+2. 新增 `backend/app/reba.py`，使用 REBA 表 A/B/C 计算分项、Score A/B/C 和最终分数，视频不可观测的负荷、耦合、扭转和活动频率显式使用中性代理值，规则版本为 `reba-standard-proxy-0.2`。
+3. 新增 `backend/app/detector.py`，支持 `ERGOAGENT_PERSON_DETECTOR=hog` 的 OpenCV HOG 多人候选框、置信度过滤和 IoU 抑制；每个候选框分别送入 MediaPipe，并保留 Worker ID 和检测器置信度。
+4. 更新报告、README、范围和问题记录，明确 HOG 是实验能力，当前 4K 视频的多人候选仍有 ID 碎片化，不能替代专用多人姿态模型。
+
+验证：
+
+1. `.venv/bin/pytest -q`：13 passed；Python 编译和 `git diff --check` 通过。
+2. 默认 MediaPipe 真实 4K 回归：284 帧、252 检测帧、1 个 Worker、峰值 REBA 9，四种结果 artifact 均生成。
+3. HOG 实验真实 4K 回归成功完成，产生多个候选 Worker；结果显示 22 个 Worker、284 个检测帧（357 条人员观察）、平均置信度 0.745，已记录为质量阻塞而非完成声明。
+4. 浏览器首屏、移动端 390×844 视口和视频选择交互通过 DOM/截图检查；首屏文案已切换到新规则版本。
+
+状态：MVP 主线可运行；正式外部基线比较、专用多人 detector、视频负荷/耦合输入和浏览器完整上传到报告闭环仍待后续验证。

@@ -83,6 +83,8 @@ def complete_run(db, run: AnalysisRun, status: str, error_code: str | None = Non
     task = db.get(AnalysisTask, run.task_id)
     if task and task.status == "running":
         transition_task(task, status)
+        task.error_code = error_code
+        task.error_message = error_message
 
 
 def fail_expired_run(db, run: AnalysisRun, message: str = "worker lease expired") -> None:

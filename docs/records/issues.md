@@ -22,15 +22,15 @@
 
 处理：建立外部资料清单，保存访问日期、提交号、许可证文本、数据使用条件和权重来源。必要时邮件向作者确认授权，未确认前只做本地研究。
 
-## I 003，核心视觉业务代码尚未实现
+## I 003，核心视觉业务代码已实现但仍有模型边界
 
 优先级：高，状态：开放。
 
-现象：当前仓库已有 Python、前端和服务骨架，但人员检测、姿态、角度、REBA、风险事件和 Agent 工具尚未实现。
+现象：当前仓库已实现 MediaPipe 二维姿态、角度、标准表格代理 REBA、风险事件、证据和结构化助手；正式三维姿态、负荷/耦合输入和专家复核仍未接入。
 
 影响：比赛可行性目前仍是规划判断，架构运行核验只能覆盖任务和进程边界。
 
-处理：先设计数据契约，再实现 REBAPose 图片和视频推理验证，保存真实运行日志和失败样例，再决定后续开发范围。
+处理：保留可验证的二维离线主线，所有不可观测项在结果中显式记录中性代理值，并把 REBAPose/三维模型作为独立基线复现工作。
 
 ## I 004，测试客户端出现 httpx2 弃用提醒
 
@@ -41,3 +41,29 @@
 影响：现阶段测试可以正常运行，后续依赖升级时可能需要调整测试依赖或导入方式。
 
 处理：暂不改变生产依赖，保留当前两项测试。执行 `/audit tooling` 或升级 FastAPI 测试栈时重新核验。
+
+## I 005，视觉依赖的 Python 版本边界
+
+优先级：中，状态：记录。
+
+现象：MediaPipe 0.10.21 的 `mp.solutions.pose` API 在 Python 3.12 可用，但当前 Python 3.13/3.14 环境没有兼容轮子。
+
+处理：MVP 固定使用 `.venv-vision312` 运行 Worker；后续若迁移 MediaPipe Tasks API，需要单独核验模型文件来源、版本和许可证。
+
+## I 006，外部基线未完成本地复现
+
+优先级：高，状态：开放。
+
+现象：已固定 REBAPose `185391a...` 和 AutoPostureCV `82a69f...`。REBAPose 入口和所需权重/依赖已从仓库内容核验；AutoPostureCV 该提交只有 README/LICENSE，没有可运行源码。
+
+影响：`/api/analysis-runs/{run_id}/baseline` 只能报告 MediaPipe 已执行事实，候选模型保持 `not_integrated`，不能提供同视频比较指标。
+
+处理：信息写入 `docs/research/baseline-manifest.json`，接口返回 `blocked_external_runtime` / `blocked_no_source_at_commit`，不生成不可比指标。后续获取完整运行时后再固定依赖锁、权重 SHA256 并运行同视频 benchmark。
+
+## I 007，浏览器运行时验证
+
+优先级：中，状态：已关闭（2026-08-30）。
+
+现象：原先记录的插件路径已变更；从当前 bundled browser runtime 建立连接后可执行 DOM 和截图检查，项目仍未安装 Playwright。
+
+处理：已完成 Vite HTTP 200、lint、production build、首屏 DOM、390×844 移动视口截图和本地视频选择交互验证；完整上传到报告闭环仍由后端 API 回归覆盖。

@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from app.db import Base, AnalysisRun, AnalysisTask, VideoAsset, new_task
 from app.services import complete_run, create_retry_run, transition_task, write_result_json
-from app.worker import claim_one_task
+from app.worker import claim_one_task, process_one_task
 from app.storage import resolve_safe
 
 def test_schema_has_contract_tables(tmp_path):
@@ -63,3 +63,21 @@ def test_path_traversal_rejected():
         pass
     else:
         assert False, 'path traversal must be rejected'
+
+def test_worker_missing_video_fails_task(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    import app.worker as worker_module
+    old_session = worker_module.session
+    worker_module.session = lambda: sessionmaker(bind=engine)()
+    try:
+        db = sessionmaker(bind=engine)()
+        task = new_task('missing.mp4')
+        db.add(task); db.commit()
+        assert process_one_task('worker-missing') is True
+        refreshed = db.get(AnalysisTask, task.id)
+        assert refreshed.status == 'failed'
+        assert refreshed.error_code == 'analysis_failed'
+        assert 'input_video_missing' in (refreshed.error_message or '')
+    finally:
+        worker_module.session = old_session

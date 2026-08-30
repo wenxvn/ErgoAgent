@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from .db import AnalysisRun, AnalysisTask, EvidenceFrame, RiskEvent, VideoAsset, Worker, init_db, new_task, session, utcnow
+from .db import AnalysisRun, AnalysisTask, EvidenceFrame, FrameObservation, RiskEvent, VideoAsset, Worker, init_db, new_task, session, utcnow
 from .storage import save_upload, resolve_safe, media_metadata, remove_relative
 from .services import create_retry_run
 
@@ -26,6 +26,9 @@ class TaskCreate(BaseModel):
     video_asset_id: str | None = None
     profile: str | None = Field(default=None, max_length=100)
     source_name: str | None = Field(default=None, min_length=1, max_length=255)
+
+class AssistantQuestion(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
 
 def error(code: str, message: str, status: int = 400):
     raise HTTPException(status_code=status, detail={"code": code, "message": message, "details": {}})
@@ -138,7 +141,11 @@ def get_run(run_id: str):
     with session() as db:
         run = db.get(AnalysisRun, run_id)
         if run is None: error("not_found", "run does not exist", 404)
-        return {"id": run.id, "task_id": run.task_id, "attempt": run.attempt, "status": run.status, "input_video_id": run.input_video_id, "schema_version": run.schema_version, "model_summary": run.model_summary, "ruleset_version": run.ruleset_version, "generated_at": run.generated_at.isoformat(), "started_at": run.started_at.isoformat() if run.started_at else None, "finished_at": run.finished_at.isoformat() if run.finished_at else None, "error_code": run.error_code, "error_message": run.error_message, "components": [{"name": c.name, "version": c.version, "source_url": c.source_url, "license": c.license} for c in run.components], "artifacts": [{"kind": a.kind, "storage_path": a.storage_path, "sha256": a.sha256, "size_bytes": a.size_bytes, "mime_type": a.mime_type} for a in run.artifacts]}
+        summary = dict(run.model_summary)
+        if run.status == "succeeded" and "peak_reba" not in summary:
+            scores = [row.reba.get("score") for row in db.scalars(select(FrameObservation).where(FrameObservation.run_id == run.id)).all()]
+            summary["peak_reba"] = max((score for score in scores if isinstance(score, (int, float))), default=None)
+        return {"id": run.id, "task_id": run.task_id, "attempt": run.attempt, "status": run.status, "input_video_id": run.input_video_id, "schema_version": run.schema_version, "model_summary": summary, "ruleset_version": run.ruleset_version, "generated_at": run.generated_at.isoformat(), "started_at": run.started_at.isoformat() if run.started_at else None, "finished_at": run.finished_at.isoformat() if run.finished_at else None, "error_code": run.error_code, "error_message": run.error_message, "components": [{"name": c.name, "version": c.version, "source_url": c.source_url, "license": c.license} for c in run.components], "artifacts": [{"kind": a.kind, "storage_path": a.storage_path, "sha256": a.sha256, "size_bytes": a.size_bytes, "mime_type": a.mime_type} for a in run.artifacts]}
 
 def cursor_page(items, limit: int):
     page = items[:limit]
@@ -189,6 +196,46 @@ def evidence_content(evidence_id: str):
         except ValueError: error("invalid_storage_path", "invalid storage path", 500)
         if not path.is_file(): error("file_gone", "evidence file has been removed", 410)
         return FileResponse(path, media_type="image/jpeg")
+
+@app.get("/api/analysis-runs/{run_id}/artifacts/{kind}/content")
+def artifact_content(run_id: str, kind: str):
+    from fastapi.responses import FileResponse
+    with session() as db:
+        run = db.get(AnalysisRun, run_id)
+        if run is None: error("not_found", "run does not exist", 404)
+        artifact = next((item for item in run.artifacts if item.kind == kind), None)
+        if artifact is None: error("not_found", "result artifact does not exist", 404)
+        try: path = resolve_safe(artifact.storage_path)
+        except ValueError: error("invalid_storage_path", "invalid storage path", 500)
+        if not path.is_file(): error("file_gone", "result file has been removed", 410)
+        return FileResponse(path, media_type=artifact.mime_type)
+
+@app.post("/api/analysis-runs/{run_id}/assistant")
+def run_assistant(run_id: str, payload: AssistantQuestion):
+    with session() as db:
+        try:
+            from .agent import answer_question
+            return answer_question(db, run_id, payload.question)
+        except ValueError as exc:
+            error("not_found", str(exc), 404)
+
+@app.get("/api/analysis-runs/{run_id}/baseline")
+def baseline_status(run_id: str):
+    with session() as db:
+        run = db.get(AnalysisRun, run_id)
+        if run is None: error("not_found", "run does not exist", 404)
+        from .baselines import load_manifest
+        manifest = load_manifest()
+        reference = dict(manifest.get("reference", {}))
+        reference.update({"version": run.model_summary.get("version", reference.get("version", "unknown")), "status": "executed"})
+        return {
+            "run_id": run_id,
+            "manifest_version": manifest.get("manifest_version", "unknown"),
+            "reference": reference,
+            "candidates": manifest.get("candidates", []),
+            "metrics": {"peak_reba": run.model_summary.get("peak_reba"), "detected_frames": run.model_summary.get("detected_frames"), "detected_observations": run.model_summary.get("detected_observations"), "frames": run.model_summary.get("frames"), "mean_confidence": run.model_summary.get("mean_confidence")},
+            "reproducibility": {"input_video_id": run.input_video_id, "ruleset_version": run.ruleset_version, "run_id": run.id, "comparison_schema_version": "0.1", "metrics_are_comparable": False},
+        }
 
 def run() -> None:
     import uvicorn
