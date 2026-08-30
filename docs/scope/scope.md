@@ -19,7 +19,7 @@ ErgoAgent 是面向建筑、制造、仓储和物流作业的职业工效风险�
 |---|---------|-------|--------|
 | 1 | 技术栈与架构 | 基础 | in-progress |
 | 2 | 编码规范与工具链 | 基础 | planned |
-| 3 | 数据契约与持久化 | 基础 | planned |
+| 3 | 数据契约与持久化 | 基础 | done |
 | 4 | 设计系统与界面基础 | 基础 | planned |
 | 5 | 最小端到端骨架，一段视频到一份结果 | 骨架 | planned |
 | 6 | 基线可复现与对比 | 切片二 | planned |
@@ -48,14 +48,14 @@ ErgoAgent 是面向建筑、制造、仓储和物流作业的职业工效风险�
 - [ ] 安装和配置工具：`/develop tooling`
 - [ ] 验证工具链：`/check verify tooling`
 
-### 3. 数据契约与持久化 · in-progress · Full
+### 3. 数据契约与持久化 · done · Full
 
 为视频、人员、帧、姿态、角度、规则结果、风险事件、证据帧和分析任务定义稳定的数据契约。
 **Done when:** 统一 JSON、持久化结构、版本字段、错误状态和迁移策略可以支持后续分析、前端和 Agent，不依赖重新解析历史结果。
 - [x] 设计数据契约和存储决定：`/architect data contract and persistence`，规格见 [`docs/specs/0002-data-contract-and-persistence.md`](../specs/0002-data-contract-and-persistence.md)
 - [x] 实现模型、迁移、文件存储和读取接口：`/develop data contract and persistence`，代码位于 `backend/app/`、`backend/alembic/`
-- [ ] 验证迁移、状态机、分页和路径安全：`/check verify data contract and persistence`
-- [ ] 固化数据契约和失败场景测试：`/test data contract and persistence`
+- [x] 验证迁移、状态机、分页和路径安全：`/check verify data contract and persistence`
+- [x] 固化数据契约和失败场景测试：`/test data contract and persistence`
 
 ### 4. 设计系统与界面基础 · needs a decision
 

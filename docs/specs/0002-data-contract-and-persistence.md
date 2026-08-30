@@ -1,7 +1,7 @@
 # 0002. 统一分析数据契约与持久化结构
 
 **Date**: 2026-08-29
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 
