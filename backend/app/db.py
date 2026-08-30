@@ -31,6 +31,7 @@ class VideoAsset(Base):
     height: Mapped[int | None] = mapped_column(Integer)
     fps: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    tasks: Mapped[list["AnalysisTask"]] = relationship(back_populates="video")
 
 
 class AnalysisTask(Base):
@@ -51,6 +52,7 @@ class AnalysisTask(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     runs: Mapped[list["AnalysisRun"]] = relationship(back_populates="task")
+    video: Mapped[VideoAsset | None] = relationship(back_populates="tasks")
     __table_args__ = (CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled')", name="ck_task_status"),)
 
 
@@ -173,10 +175,13 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 def init_db() -> None:
     ensure_data_directories()
     Path(DATA_ROOT).mkdir(parents=True, exist_ok=True)
-    # The scaffold database had only source_name. It is a disposable development artifact.
-    if "analysis_tasks" in inspect(engine).get_table_names() and "video_asset_id" not in {c["name"] for c in inspect(engine).get_columns("analysis_tasks")}:
-        Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    tables = inspect(engine).get_table_names()
+    if "analysis_tasks" in tables and "video_asset_id" not in {c["name"] for c in inspect(engine).get_columns("analysis_tasks")}:
+        raise RuntimeError(
+            "legacy database schema detected; back up or remove the development database, then run `alembic upgrade head`"
+        )
+    if not tables:
+        raise RuntimeError("database schema is not initialized; run `alembic upgrade head`")
 
 
 def new_task(source_name: str, video_asset_id: str | None = None, profile: str | None = None) -> AnalysisTask:

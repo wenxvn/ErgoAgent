@@ -114,3 +114,22 @@
 遗留：完整的模型推理结果写入流程、Worker 失败恢复和前端结果工作台仍属于后续端到端切片，数据契约功能还需独立 `/check verify` 和 `/test` 完成最终验收。
 
 补充复核：规格复查后明确加入任务租约、取消请求、运行 `attempt`、视频元数据读取接口、JSON 坐标和 REBA 分数形状，以及旧脚手架数据库的处理策略，避免开发阶段出现未记录的承重决定。
+
+## 2026 年 8 月 30 日，完成数据契约最终验收
+
+范围：`/develop data contract and persistence` 收尾。
+
+改动：
+
+1. 正式任务接口强制 `video_asset_id`，同一视频的排队或运行任务返回统一 `video_busy` 错误；保留旧 `/api/tasks` 的 `source_name` 兼容入口。
+2. 增加排队任务取消和运行中取消请求，Worker 领取任务时使用条件更新避免重复领取；失败重试重新排队，由 Worker 创建新的运行 attempt。
+3. 修复统一错误响应的 HTTP 状态码传递、游标分页查询和结果 JSON 的 `fsync` 原子落盘。
+4. 旧脚手架数据库不再被静默删除；未初始化或旧 schema 会提示先执行 Alembic。
+
+验证：
+
+1. `.venv/bin/pytest -q`：6 passed。
+2. `.venv/bin/python -m compileall -q backend/app backend/alembic` 和 `git diff --check` 通过。
+3. 在全新临时 SQLite 数据库执行 `ERGOAGENT_DATA_ROOT=<tmp> .venv/bin/alembic upgrade head`，确认九张业务表、外键、`uq_run_attempt` 唯一约束及风险事件索引均存在。
+
+状态：数据契约与持久化实现完成；后续仍需独立 `/check verify data contract and persistence` 与 `/test data contract and persistence` 做流程级复核。

@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from app.db import Base, AnalysisRun, AnalysisTask, VideoAsset, new_task
 from app.services import complete_run, create_retry_run, transition_task, write_result_json
+from app.worker import claim_one_task
 from app.storage import resolve_safe
 
 def test_schema_has_contract_tables(tmp_path):
@@ -41,8 +42,19 @@ def test_transitions_and_retry(tmp_path):
     task = new_task('x.mp4'); db.add(task); db.commit()
     transition_task(task, 'running'); transition_task(task, 'failed'); db.commit()
     retry = create_retry_run(db, task); db.commit()
-    assert task.status == 'running' and retry.attempt == 1
+    assert task.status == 'queued' and retry.attempt == 1
     assert retry.status == 'running'
+    # A retry is materialized as a new run only when a worker claims it.
+    worker_engine = engine
+    from app import worker as worker_module
+    old_session = worker_module.session
+    worker_module.session = lambda: sessionmaker(bind=worker_engine)()
+    try:
+        assert claim_one_task('worker-1') is True
+    finally:
+        worker_module.session = old_session
+    runs = db.query(AnalysisRun).filter_by(task_id=task.id).order_by(AnalysisRun.attempt).all()
+    assert len(runs) == 1 and runs[0].attempt == 1 and runs[0].status == 'running'
 
 def test_path_traversal_rejected():
     try:

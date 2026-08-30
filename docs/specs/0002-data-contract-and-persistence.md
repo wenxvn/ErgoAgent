@@ -186,7 +186,7 @@ failed: retry creates a new analysis_run, task remains an immutable record
 3. [x] 实现任务和运行状态服务，加入 Worker 租约、合法状态转换、失败记录和重试新运行，满足 **AC-2**、**AC-7**。
 4. [x] 实现 Pydantic 数据契约和结果封装，校验逐帧 JSON、REBA 细节、版本字段、组件来源和结果文件清单，满足 **AC-3**、**AC-4**、**AC-5**。
 5. [x] 实现任务、运行、人员、风险事件和证据读取接口，统一错误结构和游标分页，满足 **AC-5**、**AC-6**。
-6. 在临时 SQLite 数据库应用迁移，运行完整测试、路径安全测试、失败恢复测试和接口测试，确认实际 schema 与契约一致，满足 **AC-6**、**AC-7**、**AC-8**。
+6. [x] 在临时 SQLite 数据库应用迁移，运行完整测试、路径安全测试、失败恢复测试和接口测试，确认实际 schema 与契约一致，满足 **AC-6**、**AC-7**、**AC-8**。
 
 ## Consequences
 

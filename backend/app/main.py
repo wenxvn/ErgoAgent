@@ -6,8 +6,8 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import select
-from .db import AnalysisRun, AnalysisTask, EvidenceFrame, RiskEvent, VideoAsset, Worker, init_db, new_task, session
+from sqlalchemy import func, select
+from .db import AnalysisRun, AnalysisTask, EvidenceFrame, RiskEvent, VideoAsset, Worker, init_db, new_task, session, utcnow
 from .storage import save_upload, resolve_safe, media_metadata, remove_relative
 from .services import create_retry_run
 
@@ -38,12 +38,12 @@ def task_json(task: AnalysisTask) -> dict:
 async def http_error(_, exc: HTTPException):
     from fastapi.responses import JSONResponse
     detail = exc.detail if isinstance(exc.detail, dict) and "code" in exc.detail else {"code": "http_error", "message": str(exc.detail), "details": {}}
-    return JSONResponse(exc.status_code, {"error": detail})
+    return JSONResponse(status_code=exc.status_code, content={"error": detail})
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(_: Request, exc: RequestValidationError):
     from fastapi.responses import JSONResponse
-    return JSONResponse(422, {"error": {"code": "invalid_parameters", "message": "request parameters are invalid", "details": {"errors": exc.errors()}}})
+    return JSONResponse(status_code=422, content={"error": {"code": "invalid_parameters", "message": "request parameters are invalid", "details": {"errors": exc.errors()}}})
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -70,7 +70,10 @@ async def upload_video(file: UploadFile = File(...)):
 def create_analysis_task(payload: TaskCreate):
     with session() as db:
         video = db.get(VideoAsset, payload.video_asset_id) if payload.video_asset_id else None
-        if payload.video_asset_id and video is None: error("video_not_found", "video does not exist", 404)
+        if not payload.video_asset_id: error("video_required", "video_asset_id is required", 422)
+        if video is None: error("video_not_found", "video does not exist", 404)
+        active = db.scalar(select(func.count(AnalysisTask.id)).where(AnalysisTask.video_asset_id == video.id, AnalysisTask.status.in_(["queued", "running"])))
+        if active: error("video_busy", "video already has an active analysis task", 409)
         source = payload.source_name or (video.original_name if video else "unknown")
         task = new_task(source, payload.video_asset_id, payload.profile)
         db.add(task); db.commit(); db.refresh(task)
@@ -78,7 +81,14 @@ def create_analysis_task(payload: TaskCreate):
 
 @app.post("/api/tasks", status_code=201)
 def create_legacy_task(payload: TaskCreate):
-    return create_analysis_task(payload)
+    if not payload.source_name:
+        error("source_name_required", "source_name is required for the legacy endpoint", 422)
+    with session() as db:
+        task = new_task(payload.source_name, profile=payload.profile)
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        return task_json(task)
 
 @app.get("/api/analysis-tasks/{task_id}")
 @app.get("/api/tasks/{task_id}")
@@ -86,6 +96,21 @@ def get_task(task_id: str):
     with session() as db:
         task = db.get(AnalysisTask, task_id)
         if task is None: error("not_found", "task does not exist", 404)
+        return task_json(task)
+
+@app.post("/api/analysis-tasks/{task_id}/cancel")
+def cancel_task(task_id: str):
+    with session() as db:
+        task = db.get(AnalysisTask, task_id)
+        if task is None: error("not_found", "task does not exist", 404)
+        if task.status == "queued":
+            task.status = "cancelled"
+            task.finished_at = task.updated_at = utcnow()
+        elif task.status == "running":
+            task.cancel_requested_at = utcnow()
+        else:
+            error("invalid_state", "task is already complete", 409)
+        db.commit()
         return task_json(task)
 
 @app.post("/api/analysis-tasks/{task_id}/retry", status_code=201)
@@ -97,15 +122,16 @@ def retry_task(task_id: str):
             run = create_retry_run(db, task)
         except ValueError as exc:
             error("invalid_state", str(exc), 409)
-        db.commit(); db.refresh(run)
-        return {"task_id": task.id, "run_id": run.id, "attempt": run.attempt, "status": run.status, "started_at": run.started_at.isoformat() if run.started_at else None}
+        db.commit(); db.refresh(task)
+        return {"task_id": task.id, "status": task.status, "attempt": run.attempt}
 
 @app.get("/api/videos/{video_id}")
 def get_video(video_id: str):
     with session() as db:
         asset = db.get(VideoAsset, video_id)
         if asset is None: error("not_found", "video does not exist", 404)
-        return {"video_asset_id": asset.id, "original_name": asset.original_name, "storage_path": asset.storage_path, "sha256": asset.sha256, "size_bytes": asset.size_bytes, "mime_type": asset.mime_type, "duration_ms": asset.duration_ms, "width": asset.width, "height": asset.height, "fps": asset.fps, "result_count": 0, "created_at": asset.created_at.isoformat()}
+        count = db.scalar(select(func.count(AnalysisRun.id)).where(AnalysisRun.input_video_id == asset.id, AnalysisRun.status == "succeeded")) or 0
+        return {"video_asset_id": asset.id, "original_name": asset.original_name, "storage_path": asset.storage_path, "sha256": asset.sha256, "size_bytes": asset.size_bytes, "mime_type": asset.mime_type, "duration_ms": asset.duration_ms, "width": asset.width, "height": asset.height, "fps": asset.fps, "result_count": count, "created_at": asset.created_at.isoformat()}
 
 @app.get("/api/analysis-runs/{run_id}")
 def get_run(run_id: str):
@@ -132,17 +158,17 @@ def list_workers(run_id: str, limit: int = Query(50, ge=1, le=100), cursor: str 
         if db.get(AnalysisRun, run_id) is None: error("not_found", "run does not exist", 404)
         stmt = select(Worker).where(Worker.run_id == run_id).order_by(Worker.id)
         if (after := decode_cursor(cursor)): stmt = stmt.where(Worker.id > after)
-        rows = db.scalars(stmt).all()
+        rows = db.scalars(stmt.limit(limit + 1)).all()
         return cursor_page([{"id": w.id, "source_track_id": w.source_track_id, "first_frame": w.first_frame, "last_frame": w.last_frame, "confidence": w.confidence} for w in rows], limit)
 
 @app.get("/api/analysis-runs/{run_id}/risk-events")
 def list_events(run_id: str, worker_id: str | None = None, limit: int = Query(50, ge=1, le=100), cursor: str | None = None):
     with session() as db:
         if db.get(AnalysisRun, run_id) is None: error("not_found", "run does not exist", 404)
-        stmt = select(RiskEvent).where(RiskEvent.run_id == run_id).order_by(RiskEvent.start_ms)
+        stmt = select(RiskEvent).where(RiskEvent.run_id == run_id).order_by(RiskEvent.id)
         if worker_id: stmt = stmt.where(RiskEvent.worker_id == worker_id)
         if (after := decode_cursor(cursor)): stmt = stmt.where(RiskEvent.id > after)
-        rows = db.scalars(stmt).all()
+        rows = db.scalars(stmt.limit(limit + 1)).all()
         return cursor_page([{"id": e.id, "run_id": e.run_id, "worker_id": e.worker_id, "start_frame": e.start_frame, "end_frame": e.end_frame, "start_ms": e.start_ms, "end_ms": e.end_ms, "peak_score": e.peak_score, "mean_score": e.mean_score, "body_region": e.body_region, "repetition_count": e.repetition_count, "confidence": e.confidence, "details": e.details} for e in rows], limit)
 
 @app.get("/api/risk-events/{event_id}")

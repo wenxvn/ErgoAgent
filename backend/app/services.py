@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -39,15 +40,16 @@ def create_retry_run(db, task: AnalysisTask) -> AnalysisRun:
         raise ValueError("only failed tasks can be retried")
     attempt = db.scalar(select(AnalysisRun.attempt).where(AnalysisRun.task_id == task.id).order_by(AnalysisRun.attempt.desc()).limit(1)) or 0
     now = utcnow()
-    task.status = "running"
-    task.started_at = now
+    task.status = "queued"
+    task.started_at = None
     task.error_code = None
     task.error_message = None
     task.finished_at = None
     task.updated_at = now
-    run = AnalysisRun(task_id=task.id, attempt=attempt + 1, status="running", started_at=now, input_video_id=task.video_asset_id)
-    db.add(run)
-    return run
+    task.lease_owner = None
+    task.lease_expires_at = None
+    # The worker creates the next run when it successfully claims this task.
+    return AnalysisRun(task_id=task.id, attempt=attempt + 1, status="running", input_video_id=task.video_asset_id)
 
 
 def write_result_json(db, run: AnalysisRun, payload: dict[str, Any]) -> ResultArtifact:
@@ -61,6 +63,7 @@ def write_result_json(db, run: AnalysisRun, payload: dict[str, Any]) -> ResultAr
     with temporary.open("wb") as handle:
         handle.write(content)
         handle.flush()
+        os.fsync(handle.fileno())
     temporary.replace(target)
     digest = hashlib.sha256(content).hexdigest()
     artifact = ResultArtifact(run_id=run.id, kind="result_json", storage_path=str(Path("results") / run.id / "result.json"), sha256=digest, size_bytes=len(content), mime_type="application/json")
