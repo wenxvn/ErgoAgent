@@ -11,3 +11,6 @@ build/
 .env.*
 !.env.example
 data/*.db
+data/uploads/*
+data/results/*
+data/evidence/*

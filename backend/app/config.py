@@ -10,6 +10,8 @@ DATABASE_URL = os.getenv(
     "ERGOAGENT_DATABASE_URL",
     f"sqlite:///{(DATA_ROOT / 'ergoagent.db').as_posix()}",
 )
+MAX_VIDEO_DURATION_SECONDS = int(os.getenv("ERGOAGENT_MAX_VIDEO_DURATION_SECONDS", "1800"))
+RETENTION_DAYS = int(os.getenv("ERGOAGENT_RETENTION_DAYS", "30"))
 
 
 def ensure_data_directories() -> None:
