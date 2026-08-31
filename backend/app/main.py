@@ -20,7 +20,12 @@ async def lifespan(_: FastAPI):
     yield
 
 app = FastAPI(title="ErgoAgent API", version="0.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_methods=["GET", "POST"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 class TaskCreate(BaseModel):
     video_asset_id: str | None = None
@@ -35,7 +40,10 @@ def error(code: str, message: str, status: int = 400):
 
 def task_json(task: AnalysisTask) -> dict:
     latest = max(task.runs, key=lambda r: r.attempt, default=None)
-    return {"id": task.id, "task_id": task.id, "video_asset_id": task.video_asset_id, "status": task.status, "source_name": task.source_name, "requested_at": task.requested_at.isoformat(), "created_at": task.created_at.isoformat(), "updated_at": task.updated_at.isoformat(), "started_at": task.started_at.isoformat() if task.started_at else None, "finished_at": task.finished_at.isoformat() if task.finished_at else None, "error_code": task.error_code, "error_message": task.error_message, "run_id": latest.id if latest else None}
+    return {"id": task.id, "task_id": task.id, "video_asset_id": task.video_asset_id, "status": task.status, "source_name": task.source_name, "requested_at": task.requested_at.isoformat(), "created_at": task.created_at.isoformat(), "updated_at": task.updated_at.isoformat(), "started_at": task.started_at.isoformat() if task.started_at else None, "finished_at": task.finished_at.isoformat() if task.finished_at else None, "error_code": task.error_code, "error_message": task.error_message, "run_id": latest.id if latest else None, "progress_stage": task.progress_stage, "progress_current_frame": task.progress_current_frame, "progress_total_frames": task.progress_total_frames, "progress_detected_frames": task.progress_detected_frames, "progress_peak_reba": task.progress_peak_reba}
+
+def video_asset_json(asset: VideoAsset, reused: bool = False) -> dict:
+    return {"video_asset_id": asset.id, "original_name": asset.original_name, "storage_path": asset.storage_path, "sha256": asset.sha256, "size_bytes": asset.size_bytes, "mime_type": asset.mime_type, "duration_ms": asset.duration_ms, "width": asset.width, "height": asset.height, "fps": asset.fps, "created_at": asset.created_at.isoformat(), "reused": reused}
 
 @app.exception_handler(HTTPException)
 async def http_error(_, exc: HTTPException):
@@ -59,7 +67,7 @@ async def upload_video(file: UploadFile = File(...)):
         existing = db.scalar(select(VideoAsset).where(VideoAsset.sha256 == digest))
         if existing:
             remove_relative(path)
-            error("duplicate_video", "video checksum already exists", 409)
+            return video_asset_json(existing, reused=True)
         metadata = media_metadata(path)
         from .config import MAX_VIDEO_DURATION_SECONDS
         if metadata.get("duration_ms") and metadata["duration_ms"] > MAX_VIDEO_DURATION_SECONDS * 1000:
@@ -67,7 +75,7 @@ async def upload_video(file: UploadFile = File(...)):
             error("video_too_long", "video exceeds duration limit", 413)
         asset = VideoAsset(original_name=file.filename or "video", storage_path=path, sha256=digest, size_bytes=size, mime_type=file.content_type or "application/octet-stream", **metadata)
         db.add(asset); db.commit(); db.refresh(asset)
-        return {"video_asset_id": asset.id, "original_name": asset.original_name, "storage_path": asset.storage_path, "sha256": asset.sha256, "size_bytes": asset.size_bytes, "mime_type": asset.mime_type, "duration_ms": asset.duration_ms, "width": asset.width, "height": asset.height, "fps": asset.fps, "created_at": asset.created_at.isoformat()}
+        return video_asset_json(asset)
 
 @app.post("/api/analysis-tasks", status_code=201)
 def create_analysis_task(payload: TaskCreate):
@@ -100,6 +108,20 @@ def get_task(task_id: str):
         task = db.get(AnalysisTask, task_id)
         if task is None: error("not_found", "task does not exist", 404)
         return task_json(task)
+
+@app.get("/api/analysis-tasks/{task_id}/progress-preview")
+def task_progress_preview(task_id: str):
+    from fastapi.responses import FileResponse, Response
+    with session() as db:
+        task = db.get(AnalysisTask, task_id)
+        if task is None: error("not_found", "task does not exist", 404)
+        latest = max(task.runs, key=lambda item: item.attempt, default=None)
+        if latest is None:
+            return Response(status_code=204)
+        path = resolve_safe(f"results/{latest.id}/progress.jpg")
+        if not path.is_file():
+            return Response(status_code=204)
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 @app.post("/api/analysis-tasks/{task_id}/cancel")
 def cancel_task(task_id: str):

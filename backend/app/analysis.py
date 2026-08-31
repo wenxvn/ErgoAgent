@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import math
+import subprocess
 from pathlib import Path
 from typing import Any
 
 from .config import DATA_ROOT
-from .db import AnalysisRun, EvidenceFrame, FrameObservation, ResultArtifact, RiskEvent, RunComponent, VideoAsset, Worker, utcnow
+from .db import AnalysisRun, AnalysisTask, EvidenceFrame, FrameObservation, ResultArtifact, RiskEvent, RunComponent, VideoAsset, Worker, utcnow
 from .storage import resolve_safe
 from .tracking import CentroidTracker
 from .detector import detect_person_boxes, detector_mode
@@ -33,6 +34,28 @@ def _point(landmarks: Any, index: int, width: int, height: int) -> tuple[float, 
     p = landmarks[index]
     return (float(p.x * width), float(p.y * height), float(max(0, min(1, p.visibility))))
 
+
+def _update_progress(
+    db, run: AnalysisRun, *, stage: str, current_frame: int | None = None,
+    total_frames: int | None = None, detected_frames: int | None = None,
+    peak_reba: float | None = None, commit: bool = False,
+) -> None:
+    task = db.get(AnalysisTask, run.task_id)
+    if task is None:
+        return
+    task.progress_stage = stage
+    if current_frame is not None:
+        task.progress_current_frame = current_frame
+    if total_frames is not None:
+        task.progress_total_frames = total_frames
+    if detected_frames is not None:
+        task.progress_detected_frames = detected_frames
+    if peak_reba is not None:
+        task.progress_peak_reba = peak_reba
+    task.updated_at = utcnow()
+    if commit:
+        db.commit()
+
 def analyze_video(run: AnalysisRun, video: VideoAsset, db) -> dict[str, Any]:
     try:
         import cv2
@@ -45,18 +68,22 @@ def analyze_video(run: AnalysisRun, video: VideoAsset, db) -> dict[str, Any]:
     if not capture.isOpened(): raise RuntimeError("video_open_failed: unable to open uploaded video")
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0); height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 25); fps = fps if fps > 0 else 25
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     out_dir = Path(DATA_ROOT) / "results" / run.id; out_dir.mkdir(parents=True, exist_ok=True)
     annotated = out_dir / "annotated.mp4"
+    annotated_source = out_dir / "annotated-source.mp4"
+    progress_preview = out_dir / "progress.jpg"
     if width <= 0 or height <= 0:
         capture.release()
         raise RuntimeError("video_metadata_invalid: uploaded video has no frame dimensions")
-    writer = cv2.VideoWriter(str(annotated), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    writer = cv2.VideoWriter(str(annotated_source), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():
         capture.release()
         raise RuntimeError("annotated_video_open_failed: unable to create result video")
     # Scale the pixel-space association threshold with the source resolution.
     # A fixed threshold fragments the same person in 4K footage when pose boxes
     # move by more than a few hundred pixels between adjacent frames.
+    _update_progress(db, run, stage="detecting_pose", current_frame=0, total_frames=total_frames, detected_frames=0, peak_reba=0, commit=True)
     tracker = CentroidTracker(max_distance=max(width, height) * 0.2, max_missed=max(10, round(fps * 2)), single_track_grace=True)
     workers_by_track: dict[str, Worker] = {}
     frame_rows: list[dict[str, Any]] = []
@@ -132,9 +159,20 @@ def analyze_video(run: AnalysisRun, video: VideoAsset, db) -> dict[str, Any]:
                 cv2.putText(frame, f"{track_id}  REBA {reba['score']}  {reba['risk_level']}", (max(10, int(bbox["x"])), max(24, int(bbox["y"] - 8))), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 220) if reba["score"] >= 8 else (40, 130, 60), 2)
                 if reba["score"] >= 8: evidence_candidates.append((index, worker.id, confidence, frame.copy(), reba))
             writer.write(frame); index += 1
+            if index % 10 == 0:
+                cv2.imwrite(str(progress_preview), frame)
+                detected_count = len({item["frame_index"] for item in frame_rows})
+                peak_score = max((item["score"] for item in frame_rows), default=0)
+                _update_progress(db, run, stage="scoring_reba", current_frame=index, total_frames=total_frames, detected_frames=detected_count, peak_reba=peak_score, commit=True)
     finally:
         pose.close(); capture.release(); writer.release()
     if not frame_rows: raise RuntimeError("no_pose_detected: no person pose was detected in the uploaded video")
+    _update_progress(db, run, stage="exporting_video", current_frame=index, total_frames=total_frames or index, detected_frames=len({item["frame_index"] for item in frame_rows}), peak_reba=max(item["score"] for item in frame_rows), commit=True)
+    conversion = subprocess.run(["ffmpeg", "-y", "-i", str(annotated_source), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(annotated)], capture_output=True, text=True)
+    if conversion.returncode != 0 or not annotated.is_file():
+        detail = conversion.stderr.strip().splitlines()[-1] if conversion.stderr.strip() else "ffmpeg did not produce an output file"
+        raise RuntimeError(f"annotated_video_transcode_failed: {detail}")
+    annotated_source.unlink(missing_ok=True)
     for worker in workers_by_track.values():
         worker_rows = [x for x in frame_rows if x["worker_id"] == worker.id]
         worker.confidence = round(sum(x["confidence"] for x in worker_rows) / len(worker_rows), 3)
@@ -157,6 +195,7 @@ def analyze_video(run: AnalysisRun, video: VideoAsset, db) -> dict[str, Any]:
                 path = Path(DATA_ROOT) / "evidence" / run.id; path.mkdir(parents=True, exist_ok=True); target = path / f"frame-{frame_index:06d}.jpg"; cv2.imwrite(str(target), image); content = target.read_bytes()
                 db.add(EvidenceFrame(run_id=run.id, event_id=event.id, worker_id=worker_id, frame_index=frame_index, storage_path=str(Path("evidence") / run.id / target.name), sha256=hashlib.sha256(content).hexdigest(), reason="REBA score reached high risk threshold"))
             risk_rows.append({"event_id": event.id, "worker_id": worker_id, "start_frame": event.start_frame, "end_frame": event.end_frame, "start_ms": event.start_ms, "end_ms": event.end_ms, "peak_score": event.peak_score})
+    _update_progress(db, run, stage="building_evidence", current_frame=index, total_frames=total_frames or index, detected_frames=len({item["frame_index"] for item in frame_rows}), peak_reba=max(item["score"] for item in frame_rows))
     component = RunComponent(run_id=run.id, name="MediaPipe Pose", version=getattr(mp, "__version__", "unknown"), source_url="https://github.com/google-ai-edge/mediapipe", license="Apache-2.0")
     db.add(component)
     annotated_rel = str(Path("results") / run.id / annotated.name); content = annotated.read_bytes(); run.artifacts.append(ResultArtifact(kind="annotated_video", storage_path=annotated_rel, sha256=hashlib.sha256(content).hexdigest(), size_bytes=len(content), mime_type="video/mp4"))

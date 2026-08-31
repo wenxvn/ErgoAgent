@@ -59,10 +59,15 @@ def process_one_task(worker_id: str | None = None) -> bool:
                 logger.info('{"event":"task_cancelled","task_id":"%s","run_id":"%s"}', run.task_id, run.id)
                 return True
             from .services import write_result_json
+            run.task.progress_stage = "writing_report"
+            run.task.updated_at = utcnow()
+            db.commit()
             write_result_json(db, run, payload)
             from .report import write_report
             write_report(db, run, payload)
             complete_run(db, run, "succeeded")
+            run.task.progress_stage = "complete"
+            run.task.updated_at = utcnow()
             db.commit()
             logger.info('{"event":"task_succeeded","task_id":"%s","run_id":"%s"}', run.task_id, run.id)
             return True
