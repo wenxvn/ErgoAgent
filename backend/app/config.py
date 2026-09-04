@@ -12,6 +12,7 @@ DATABASE_URL = os.getenv(
 )
 MAX_VIDEO_DURATION_SECONDS = int(os.getenv("ERGOAGENT_MAX_VIDEO_DURATION_SECONDS", "1800"))
 RETENTION_DAYS = int(os.getenv("ERGOAGENT_RETENTION_DAYS", "30"))
+PREVIEW_TARGET_FPS = float(os.getenv("ERGOAGENT_PREVIEW_FPS", "8"))
 
 
 def ensure_data_directories() -> None:

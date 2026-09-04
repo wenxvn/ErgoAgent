@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from .db import AnalysisRun, AnalysisTask, EvidenceFrame, FrameObservation, RiskEvent, VideoAsset, Worker, init_db, new_task, session, utcnow
 from .storage import save_upload, resolve_safe, media_metadata, remove_relative
 from .services import create_retry_run
+from .config import PREVIEW_TARGET_FPS
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("ergoagent.api")
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "X-Preview-Frame"],
 )
 
 class TaskCreate(BaseModel):
@@ -40,7 +42,8 @@ def error(code: str, message: str, status: int = 400):
 
 def task_json(task: AnalysisTask) -> dict:
     latest = max(task.runs, key=lambda r: r.attempt, default=None)
-    return {"id": task.id, "task_id": task.id, "video_asset_id": task.video_asset_id, "status": task.status, "source_name": task.source_name, "requested_at": task.requested_at.isoformat(), "created_at": task.created_at.isoformat(), "updated_at": task.updated_at.isoformat(), "started_at": task.started_at.isoformat() if task.started_at else None, "finished_at": task.finished_at.isoformat() if task.finished_at else None, "error_code": task.error_code, "error_message": task.error_message, "run_id": latest.id if latest else None, "progress_stage": task.progress_stage, "progress_current_frame": task.progress_current_frame, "progress_total_frames": task.progress_total_frames, "progress_detected_frames": task.progress_detected_frames, "progress_peak_reba": task.progress_peak_reba}
+    source_fps = task.video.fps if task.video and task.video.fps else None
+    return {"id": task.id, "task_id": task.id, "video_asset_id": task.video_asset_id, "status": task.status, "source_name": task.source_name, "requested_at": task.requested_at.isoformat(), "created_at": task.created_at.isoformat(), "updated_at": task.updated_at.isoformat(), "started_at": task.started_at.isoformat() if task.started_at else None, "finished_at": task.finished_at.isoformat() if task.finished_at else None, "error_code": task.error_code, "error_message": task.error_message, "run_id": latest.id if latest else None, "progress_stage": task.progress_stage, "progress_current_frame": task.progress_current_frame, "progress_total_frames": task.progress_total_frames, "progress_detected_frames": task.progress_detected_frames, "progress_peak_reba": task.progress_peak_reba, "progress_source_fps": source_fps, "progress_preview_fps": min(source_fps, PREVIEW_TARGET_FPS) if source_fps else PREVIEW_TARGET_FPS}
 
 def video_asset_json(asset: VideoAsset, reused: bool = False) -> dict:
     return {"video_asset_id": asset.id, "original_name": asset.original_name, "storage_path": asset.storage_path, "sha256": asset.sha256, "size_bytes": asset.size_bytes, "mime_type": asset.mime_type, "duration_ms": asset.duration_ms, "width": asset.width, "height": asset.height, "fps": asset.fps, "created_at": asset.created_at.isoformat(), "reused": reused}
@@ -121,7 +124,7 @@ def task_progress_preview(task_id: str):
         path = resolve_safe(f"results/{latest.id}/progress.jpg")
         if not path.is_file():
             return Response(status_code=204)
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Preview-Frame": str(task.progress_current_frame or 0)})
 
 @app.post("/api/analysis-tasks/{task_id}/cancel")
 def cancel_task(task_id: str):

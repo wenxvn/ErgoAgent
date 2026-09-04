@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import DATA_ROOT
+from .config import DATA_ROOT, PREVIEW_TARGET_FPS
 from .db import AnalysisRun, AnalysisTask, EvidenceFrame, FrameObservation, ResultArtifact, RiskEvent, RunComponent, VideoAsset, Worker, utcnow
 from .storage import resolve_safe
 from .tracking import CentroidTracker
@@ -19,6 +20,67 @@ KEYPOINTS = {
     "right_hip": 24, "left_knee": 25, "right_knee": 26, "left_ankle": 27,
     "right_ankle": 28, "left_foot": 31, "right_foot": 32,
 }
+
+SKELETON = (
+    ("nose", "left_shoulder"), ("nose", "right_shoulder"),
+    ("left_shoulder", "left_elbow"), ("left_elbow", "left_wrist"),
+    ("right_shoulder", "right_elbow"), ("right_elbow", "right_wrist"),
+    ("left_shoulder", "right_shoulder"), ("left_shoulder", "left_hip"),
+    ("right_shoulder", "right_hip"), ("left_hip", "right_hip"),
+    ("left_hip", "left_knee"), ("left_knee", "left_ankle"),
+    ("right_hip", "right_knee"), ("right_knee", "right_ankle"),
+)
+
+
+def _draw_annotation(frame: Any, bbox: dict[str, float], points: dict[str, tuple[float, float, float]],
+                     track_id: str, score: float, risk_level: str, cv2: Any) -> None:
+    """Draw annotations that remain legible in both 1080p and 4K exports."""
+    height, width = frame.shape[:2]
+    scale = max(1.0, min(width, height) / 1080)
+    color = (36, 76, 224) if score >= 8 else (34, 156, 84)
+    outline = (12, 20, 35)
+    line_width = max(3, round(4 * scale))
+    point_radius = max(5, round(7 * scale))
+    # Draw the skeleton twice so the colored stroke has contrast on bright footage.
+    for start, end in SKELETON:
+        first, second = points.get(start), points.get(end)
+        if not first or not second or first[2] < 0.3 or second[2] < 0.3:
+            continue
+        p1 = (round(first[0]), round(first[1])); p2 = (round(second[0]), round(second[1]))
+        cv2.line(frame, p1, p2, outline, line_width + max(3, round(3 * scale)), cv2.LINE_AA)
+        cv2.line(frame, p1, p2, color, line_width, cv2.LINE_AA)
+    for point in points.values():
+        if point[2] < 0.3:
+            continue
+        center = (round(point[0]), round(point[1]))
+        cv2.circle(frame, center, point_radius + max(2, round(2 * scale)), outline, -1, cv2.LINE_AA)
+        cv2.circle(frame, center, point_radius, color, -1, cv2.LINE_AA)
+    x1 = max(0, round(bbox["x"])); y1 = max(0, round(bbox["y"]))
+    x2 = min(width - 1, round(bbox["x"] + bbox["width"])); y2 = min(height - 1, round(bbox["y"] + bbox["height"]))
+    cv2.rectangle(frame, (x1, y1), (x2, y2), outline, line_width + max(3, round(3 * scale)), cv2.LINE_AA)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, line_width, cv2.LINE_AA)
+    label = f"{track_id}  REBA {score:g}  {risk_level}"
+    font_scale = max(0.7, 0.72 * scale)
+    text_width, text_height = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, max(2, round(2 * scale)))[0]
+    label_x = min(max(0, x1), max(0, width - text_width - line_width * 2))
+    label_y = y1 - max(8, round(12 * scale))
+    if label_y - text_height < 0:
+        label_y = min(height - line_width, y1 + text_height + max(10, round(12 * scale)))
+    padding = max(6, round(8 * scale))
+    cv2.rectangle(frame, (label_x, label_y - text_height - padding), (label_x + text_width + padding * 2, label_y + padding // 2), outline, -1)
+    cv2.putText(frame, label, (label_x + padding, label_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), max(2, round(2 * scale)), cv2.LINE_AA)
+
+
+def _write_progress_preview(frame: Any, target: Path, cv2: Any) -> None:
+    """Publish a compact preview atomically so readers never see a partial JPEG."""
+    max_width = 1280
+    preview = frame
+    if frame.shape[1] > max_width:
+        ratio = max_width / frame.shape[1]
+        preview = cv2.resize(frame, (max_width, max(1, round(frame.shape[0] * ratio))), interpolation=cv2.INTER_AREA)
+    temporary = target.with_name(f".{target.stem}.tmp.jpg")
+    if cv2.imwrite(str(temporary), preview, [cv2.IMWRITE_JPEG_QUALITY, 82]):
+        os.replace(temporary, target)
 
 def _angle(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float]) -> float | None:
     ba = (a[0] - b[0], a[1] - b[1]); bc = (c[0] - b[0], c[1] - b[1])
@@ -73,6 +135,7 @@ def analyze_video(run: AnalysisRun, video: VideoAsset, db) -> dict[str, Any]:
     annotated = out_dir / "annotated.mp4"
     annotated_source = out_dir / "annotated-source.mp4"
     progress_preview = out_dir / "progress.jpg"
+    preview_every = max(1, round(fps / max(1.0, PREVIEW_TARGET_FPS)))
     if width <= 0 or height <= 0:
         capture.release()
         raise RuntimeError("video_metadata_invalid: uploaded video has no frame dimensions")
@@ -153,14 +216,11 @@ def analyze_video(run: AnalysisRun, video: VideoAsset, db) -> dict[str, Any]:
                 }
                 db.add(FrameObservation(run_id=run.id, worker_id=worker.id, frame_index=index, timestamp_ms=round(index * 1000 / fps), bbox=bbox, pose_2d=pose_2d, confidence=confidence, angles={k: {"degrees": v, "confidence": confidence, "source_keypoints": sources[k]} for k, v in angles.items()}, reba=reba))
                 frame_rows.append({"frame_index": index, "timestamp_ms": round(index * 1000 / fps), "worker_id": worker.id, "track_id": track_id, "score": reba["score"], "confidence": confidence})
-                for name, p in pts.items():
-                    if p[2] >= 0.3: cv2.circle(frame, (int(p[0]), int(p[1])), 4, (0, 120, 255) if reba["score"] >= 8 else (60, 180, 90), -1)
-                cv2.rectangle(frame, (int(bbox["x"]), int(bbox["y"])), (int(bbox["x"] + bbox["width"]), int(bbox["y"] + bbox["height"])), (0, 0, 220) if reba["score"] >= 8 else (40, 130, 60), 2)
-                cv2.putText(frame, f"{track_id}  REBA {reba['score']}  {reba['risk_level']}", (max(10, int(bbox["x"])), max(24, int(bbox["y"] - 8))), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 220) if reba["score"] >= 8 else (40, 130, 60), 2)
+                _draw_annotation(frame, bbox, pts, track_id, reba["score"], reba["risk_level"], cv2)
                 if reba["score"] >= 8: evidence_candidates.append((index, worker.id, confidence, frame.copy(), reba))
             writer.write(frame); index += 1
-            if index % 10 == 0:
-                cv2.imwrite(str(progress_preview), frame)
+            if index == 1 or index % preview_every == 0:
+                _write_progress_preview(frame, progress_preview, cv2)
                 detected_count = len({item["frame_index"] for item in frame_rows})
                 peak_score = max((item["score"] for item in frame_rows), default=0)
                 _update_progress(db, run, stage="scoring_reba", current_frame=index, total_frames=total_frames, detected_frames=detected_count, peak_reba=peak_score, commit=True)
